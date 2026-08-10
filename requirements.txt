@@ -1,0 +1,7 @@
+streamlit
+pypdf
+PyMuPDF
+plotly
+requests
+sentence-transformers
+pandas

@@ -1,0 +1,22 @@
+# Environment / secrets
+.env
+.env.local
+
+# Runtime-generated data — never commit real usage/user data
+usage_log.csv
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+.vscode/
+
+# Private admin/runtime data
+.streamlit/admin_auth.json
+activity_log.jsonl
+usage_log.csv
+.streamlit/secrets.toml
