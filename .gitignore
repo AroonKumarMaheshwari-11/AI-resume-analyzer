@@ -20,3 +20,4 @@ venv/
 activity_log.jsonl
 usage_log.csv
 .streamlit/secrets.toml
+ADMIN_GUIDE.md
