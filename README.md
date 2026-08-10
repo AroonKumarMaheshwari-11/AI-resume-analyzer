@@ -4,7 +4,7 @@
 
 A dark-themed resume analysis tool that scores resumes for ATS (Applicant Tracking System) compatibility, matches candidates to relevant career paths from a structured 45-role knowledge base, and surfaces live remote job listings — all in a single Streamlit web app.
 
-🔗 **Live demo:** [ai-resume-analyzer-7g3gbzi6jxpwdwwj3fe6qn.streamlit.app](https://ai-resume-analyzer-7g3gbzi6jxpwdwwj3fe6qn.streamlit.app/)
+🔗 **Live demo:** [ai-resume-analyzer-6fyqzmczo7xbmn2afrmzkg.streamlit.app](https://ai-resume-analyzer-6fyqzmczo7xbmn2afrmzkg.streamlit.app/)
 
 ---
 
@@ -40,7 +40,7 @@ A dark-themed resume analysis tool that scores resumes for ATS (Applicant Tracki
 
 This project follows standard secure-development practice. No credentials, passwords, or secrets are stored in the source code — everything sensitive is configured privately outside the repository, following the setup guide.
 
-For admin/setup instructions, see [`ADMIN_GUIDE.md`](./ADMIN_GUIDE.md) (kept private / not for public distribution).
+Admin/setup instructions are maintained privately and are not part of this public repository.
 
 ---
 
