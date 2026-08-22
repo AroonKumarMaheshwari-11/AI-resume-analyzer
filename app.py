@@ -13,6 +13,7 @@ import secrets
 from pathlib import Path
 import plotly.graph_objects as go
 from pypdf import PdfReader
+from io import BytesIO
 from docx import Document as DocxDocument
 
 # Optional local AI engine. Sentence-Transformers runs fully locally after the
@@ -878,7 +879,6 @@ def extract_text_from_pdf(file) -> str:
 
         # Strategy 2/3: pypdf layout + normal extraction.
         try:
-            from io import BytesIO
             reader = PdfReader(BytesIO(raw))
             if getattr(reader, "is_encrypted", False):
                 raise ValueError("This PDF is password-protected. Please upload an unprotected PDF.")
@@ -941,9 +941,6 @@ def extract_text_from_docx(file) -> str:
     except ValueError:
         raise
     except Exception as exc:
-        import traceback
-        print("[DOCX DEBUG]", repr(exc))
-        traceback.print_exc()
         raise ValueError(
             "Couldn't read this Word file. It may be corrupted, or in an "
             "unsupported format (only .docx is supported, not the older .doc)."
