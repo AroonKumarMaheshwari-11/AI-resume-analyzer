@@ -941,6 +941,9 @@ def extract_text_from_docx(file) -> str:
     except ValueError:
         raise
     except Exception as exc:
+        import traceback
+        print("[DOCX DEBUG]", repr(exc))
+        traceback.print_exc()
         raise ValueError(
             "Couldn't read this Word file. It may be corrupted, or in an "
             "unsupported format (only .docx is supported, not the older .doc)."
