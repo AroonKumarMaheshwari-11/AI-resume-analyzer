@@ -13,6 +13,7 @@ import secrets
 from pathlib import Path
 import plotly.graph_objects as go
 from pypdf import PdfReader
+from docx import Document as DocxDocument
 
 # Optional local AI engine. Sentence-Transformers runs fully locally after the
 # model is downloaded; no paid API key is required. The app falls back to the
@@ -917,6 +918,48 @@ def extract_text_from_pdf(file) -> str:
         ) from exc
 
 
+def extract_text_from_docx(file) -> str:
+    """Extract text from a .docx resume (paragraphs + table cells)."""
+    try:
+        raw = file.getvalue() if hasattr(file, "getvalue") else file.read()
+        if not raw:
+            raise ValueError("The uploaded Word file is empty.")
+        doc = DocxDocument(BytesIO(raw))
+        parts = [p.text for p in doc.paragraphs if p.text]
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    if cell.text:
+                        parts.append(cell.text)
+        text = _normalize_resume_text("\n".join(parts))
+        if len(re.sub(r"\s+", "", text)) < 20:
+            raise ValueError(
+                "Couldn't extract readable text from this Word document. "
+                "Make sure it isn't empty or image-only."
+            )
+        return text
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError(
+            "Couldn't read this Word file. It may be corrupted, or in an "
+            "unsupported format (only .docx is supported, not the older .doc)."
+        ) from exc
+
+
+def extract_resume_text(file) -> str:
+    """Dispatch to the right extractor based on the uploaded file's extension."""
+    name = (getattr(file, "name", "") or "").lower()
+    if name.endswith(".pdf"):
+        return extract_text_from_pdf(file)
+    elif name.endswith(".docx"):
+        return extract_text_from_docx(file)
+    else:
+        raise ValueError(
+            "Unsupported file type. Please upload a PDF or Word (.docx) file."
+        )
+
+
 def contains_keyword(text_lower: str, keyword: str) -> bool:
     """Word-boundary-safe substring check — prevents false positives like
     'oci' matching inside 'association' or 'rn' matching inside 'learning'."""
@@ -1612,52 +1655,185 @@ def read_usage_log():
         return list(csv.DictReader(f))
 
 
-def generate_report_text(name_hint, overall, quality, keyword_score, word_count,
+def generate_report_html(name_hint, overall, quality, keyword_score, word_count,
                           sections_found, used_verbs, weak_phrases, has_numbers,
                           matched_kw, missing_kw, certifications, recommendations, career_matches):
-    lines = []
-    lines.append("AI RESUME ANALYZER — ANALYSIS REPORT")
-    lines.append("=" * 45)
-    lines.append(f"ATS Score: {overall}/100")
-    lines.append(f"Resume Quality: {quality}/100")
-    lines.append(f"Keyword Match: {keyword_score if keyword_score is not None else 'N/A (no job description provided)'}")
-    lines.append(f"Word Count: {word_count}")
-    lines.append("")
-    lines.append("RESUME SECTIONS DETECTED")
-    lines.append("-" * 45)
-    for s, present in sections_found.items():
-        lines.append(f"[{'x' if present else ' '}] {s}")
-    lines.append("")
-    lines.append("WRITING QUALITY")
-    lines.append("-" * 45)
-    lines.append(f"Action verbs found: {', '.join(used_verbs) if used_verbs else 'None'}")
-    lines.append(f"Weak phrases found: {', '.join(weak_phrases) if weak_phrases else 'None'}")
-    lines.append(f"Quantifiable results present: {'Yes' if has_numbers else 'No'}")
-    lines.append("")
+    """Build a styled, self-contained HTML report matching the app's dark
+    navy / blue design. Every dynamic value is HTML-escaped since resume
+    text, certifications, and keywords are untrusted user-derived content."""
+
+    def score_color_hex(s):
+        if s >= 80: return "#22C55E"
+        if s >= 60: return "#F59E0B"
+        return "#EF4444"
+
+    generated_on = datetime.datetime.now().strftime("%B %d, %Y at %I:%M %p")
+    safe_name = html.escape((name_hint or "Candidate").strip() or "Candidate")
+
+    sections_html = "".join(
+        '<div class="sec-row {}"><span>{}</span> {}</div>'.format(
+            "sec-yes" if present else "sec-no",
+            "\u2713" if present else "\u2717",
+            html.escape(s),
+        )
+        for s, present in sections_found.items()
+    )
+
+    verbs_html = "".join('<span class="pill pill-good">{}</span>'.format(html.escape(v)) for v in used_verbs) or '<span class="muted">None detected</span>'
+    weak_html = "".join('<span class="pill pill-bad">{}</span>'.format(html.escape(p)) for p in weak_phrases) or '<span class="muted">None detected</span>'
+    certs_html = "".join('<span class="pill pill-blue">{}</span>'.format(html.escape(c)) for c in certifications) or '<span class="muted">None detected</span>'
+
+    keyword_block = ""
     if matched_kw or missing_kw:
-        lines.append("JOB DESCRIPTION KEYWORD MATCH")
-        lines.append("-" * 45)
-        lines.append(f"Matched: {', '.join(matched_kw) if matched_kw else 'None'}")
-        lines.append(f"Missing: {', '.join(missing_kw) if missing_kw else 'None'}")
-        lines.append("")
-    lines.append("CERTIFICATIONS DETECTED")
-    lines.append("-" * 45)
-    lines.append(", ".join(certifications) if certifications else "None detected")
-    lines.append("")
-    lines.append("SMART RECOMMENDATIONS")
-    lines.append("-" * 45)
+        matched_html = "".join('<span class="pill pill-good">{}</span>'.format(html.escape(k)) for k in matched_kw) or '<span class="muted">None</span>'
+        missing_html = "".join('<span class="pill pill-warn">{}</span>'.format(html.escape(k)) for k in missing_kw) or '<span class="muted">None</span>'
+        keyword_block = """
+        <div class="card">
+          <div class="card-title">\U0001F3AF Job Description Keyword Match</div>
+          <div class="two-col">
+            <div><b>Matched ({})</b><div class="pill-wrap">{}</div></div>
+            <div><b>Missing ({})</b><div class="pill-wrap">{}</div></div>
+          </div>
+        </div>""".format(len(matched_kw), matched_html, len(missing_kw), missing_html)
+
+    recs_html = ""
     for r in recommendations:
-        lines.append(f"[{r['priority']}] {r['text']}")
-    lines.append("")
-    if career_matches:
-        lines.append("BEST CAREER MATCHES")
-        lines.append("-" * 45)
-        for m in career_matches:
-            lines.append(f"{m['category']} — {m['score']}% match")
-            lines.append(f"  Suggested titles: {', '.join(m['job_titles'])}")
-    lines.append("")
-    lines.append("Generated by AI Resume Analyzer — Developed by Aroon Kumar Maheshwari")
-    return "\n".join(lines)
+        p = r["priority"]
+        cls = "rec-high" if p == "High" else ("rec-medium" if p == "Medium" else "rec-suggestion")
+        icon = "\U0001F534" if p == "High" else ("\U0001F7E1" if p == "Medium" else "\U0001F535")
+        recs_html += '<div class="rec-card {}"><span class="rec-tag">{} {} Priority</span>{}</div>'.format(
+            cls, icon, html.escape(p), html.escape(r["text"])
+        )
+    if not recs_html:
+        recs_html = '<p class="muted">No major issues found \u2014 nice work!</p>'
+
+    careers_html = ""
+    medals = ["\U0001F947", "\U0001F948", "\U0001F949"]
+    for i, m in enumerate(career_matches or []):
+        medal = medals[i] if i < len(medals) else "\u2022"
+        titles = ", ".join(html.escape(t) for t in m["job_titles"])
+        keywords = "".join('<span class="pill pill-blue">{}</span>'.format(html.escape(k)) for k in m["matched_keywords"])
+        careers_html += """
+        <div class="career-card">
+          <div class="career-title">{} {} \u2014 {}% match</div>
+          <div class="muted" style="margin-bottom:6px;">Suggested titles: {}</div>
+          <div class="pill-wrap">{}</div>
+        </div>""".format(medal, html.escape(m["category"]), m["score"], titles, keywords)
+    if not careers_html:
+        careers_html = '<p class="muted">No confident career match could be established from this resume.</p>'
+
+    keyword_display = "{}%".format(keyword_score) if keyword_score is not None else "N/A"
+
+    return """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AI Resume Analyzer \u2014 Report for {safe_name}</title>
+<style>
+  body {{ background:#F4F6FB; color:#1E293B; font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin:0; padding:0; }}
+  .wrap {{ max-width: 880px; margin: 0 auto; padding: 32px 24px 60px; }}
+  .hero {{ text-align:center; padding: 26px 0 34px; border-bottom: 1px solid #E2E8F0; margin-bottom: 26px; }}
+  .badge {{ display:inline-block; background: rgba(59,130,246,0.10); color:#2563EB; border:1px solid rgba(59,130,246,0.30); padding:5px 14px; border-radius:999px; font-size:12px; font-weight:700; letter-spacing:.06em; margin-bottom:10px; }}
+  .hero h1 {{ margin: 6px 0 4px; font-size: 30px; color:#0F172A; }}
+  .hero .muted {{ color:#64748B; font-size: 13.5px; }}
+  .metrics {{ display:grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 26px; }}
+  .metric-card {{ background:#FFFFFF; border:1px solid #E2E8F0; border-radius:14px; padding:16px; text-align:center; box-shadow:0 2px 8px rgba(15,23,42,0.04); }}
+  .metric-value {{ font-size:26px; font-weight:800; color:#0F172A; }}
+  .metric-label {{ color:#64748B; font-size:12.5px; margin-top:4px; }}
+  .card {{ background:#FFFFFF; border:1px solid #E2E8F0; border-radius:14px; padding:20px 22px; margin-bottom:18px; box-shadow:0 2px 8px rgba(15,23,42,0.04); }}
+  .card-title {{ font-size:17px; font-weight:700; margin-bottom:12px; color:#0F172A; }}
+  .two-col {{ display:grid; grid-template-columns:1fr 1fr; gap:18px; }}
+  .pill-wrap {{ margin-top:6px; }}
+  .pill {{ display:inline-block; padding:5px 12px; border-radius:999px; font-size:12px; font-weight:600; margin:3px 5px 0 0; }}
+  .pill-blue {{ background: rgba(59,130,246,0.10); color:#2563EB; border:1px solid rgba(59,130,246,0.28); }}
+  .pill-good {{ background: rgba(34,197,94,0.10); color:#15803D; border:1px solid rgba(34,197,94,0.28); }}
+  .pill-bad {{ background: rgba(239,68,68,0.10); color:#B91C1C; border:1px solid rgba(239,68,68,0.28); }}
+  .pill-warn {{ background: rgba(245,158,11,0.12); color:#B45309; border:1px solid rgba(245,158,11,0.30); }}
+  .muted {{ color:#64748B; }}
+  .sec-row {{ display:inline-flex; align-items:center; gap:6px; padding:8px 12px; border-radius:8px; font-size:13.5px; font-weight:600; margin:0 8px 8px 0; }}
+  .sec-yes {{ background: rgba(34,197,94,0.08); color:#15803D; border:1px solid rgba(34,197,94,0.25); }}
+  .sec-no {{ background: rgba(239,68,68,0.08); color:#B91C1C; border:1px solid rgba(239,68,68,0.25); }}
+  .rec-card {{ border-radius:10px; padding:12px 16px; margin-bottom:10px; background:#F8FAFC; border-left:4px solid #3B82F6; font-size:14px; color:#1E293B; }}
+  .rec-high {{ border-left-color:#EF4444; }}
+  .rec-medium {{ border-left-color:#F59E0B; }}
+  .rec-suggestion {{ border-left-color:#3B82F6; }}
+  .rec-tag {{ display:block; font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; margin-bottom:4px; }}
+  .career-card {{ background:#F8FAFC; border:1px solid #E2E8F0; border-radius:12px; padding:14px 18px; margin-bottom:12px; }}
+  .career-title {{ font-size:15.5px; font-weight:700; margin-bottom:4px; color:#0F172A; }}
+  .footer {{ text-align:center; color:#64748B; font-size:12.5px; padding-top:18px; border-top:1px solid #E2E8F0; margin-top:10px; }}
+  .footer b {{ color:#2563EB; }}
+  @media print {{ body {{ background:#fff; }} .card, .metric-card, .rec-card, .career-card {{ box-shadow:none !important; }} }}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="hero">
+    <span class="badge">AI POWERED</span>
+    <h1>AI Resume Analyzer \u2014 Report</h1>
+    <div class="muted">Prepared for <b style="color:#F8FAFC;">{safe_name}</b> \u2022 Generated on {generated_on}</div>
+  </div>
+
+  <div class="metrics">
+    <div class="metric-card"><div class="metric-value" style="color:{overall_color};">{overall}/100</div><div class="metric-label">ATS Score</div></div>
+    <div class="metric-card"><div class="metric-value">{keyword_display}</div><div class="metric-label">Keyword Match</div></div>
+    <div class="metric-card"><div class="metric-value" style="color:{quality_color};">{quality}%</div><div class="metric-label">Resume Quality</div></div>
+    <div class="metric-card"><div class="metric-value">{word_count}</div><div class="metric-label">Word Count</div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">\U0001F4CB Resume Sections Detected</div>
+    <div>{sections_html}</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">\u270D\ufe0f Writing Quality</div>
+    <p><b>Action verbs found</b></p><div class="pill-wrap">{verbs_html}</div>
+    <p style="margin-top:14px;"><b>Weak phrases found</b></p><div class="pill-wrap">{weak_html}</div>
+    <p style="margin-top:14px;"><b>Quantifiable results:</b> {numbers_display}</p>
+  </div>
+
+  {keyword_block}
+
+  <div class="card">
+    <div class="card-title">\U0001F3C6 Certifications Detected</div>
+    <div class="pill-wrap">{certs_html}</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">\U0001F4A1 Smart Recommendations</div>
+    {recs_html}
+  </div>
+
+  <div class="card">
+    <div class="card-title">\U0001F680 Best Career Matches</div>
+    {careers_html}
+  </div>
+
+  <div class="footer">
+    Generated by <b>AI Resume Analyzer</b> \u2014 Developed by <b>Aroon Kumar Maheshwari</b>
+  </div>
+
+</div>
+</body>
+</html>""".format(
+        safe_name=safe_name,
+        generated_on=generated_on,
+        overall_color=score_color_hex(overall),
+        overall=overall,
+        keyword_display=keyword_display,
+        quality_color=score_color_hex(quality),
+        quality=quality,
+        word_count=word_count,
+        sections_html=sections_html,
+        verbs_html=verbs_html,
+        weak_html=weak_html,
+        numbers_display="\u2705 Present" if has_numbers else "\u274C Not found",
+        keyword_block=keyword_block,
+        certs_html=certs_html,
+        recs_html=recs_html,
+        careers_html=careers_html,
+    )
 
 
 # ---------------------------
@@ -1876,8 +2052,12 @@ st.markdown('</div>', unsafe_allow_html=True)
 
 col1, col2 = st.columns(2)
 with col1:
-    st.markdown('<div class="card"><div class="card-title">📤 Resume</div><div class="card-subtitle">Upload your resume as a PDF file</div>', unsafe_allow_html=True)
-    uploaded_file = st.file_uploader("Upload your resume (PDF)", type=["pdf"], label_visibility="collapsed")
+    st.markdown('<div class="card"><div class="card-title">📤 Resume</div><div class="card-subtitle">Upload your resume as a PDF or Word file</div>', unsafe_allow_html=True)
+    uploaded_file = st.file_uploader(
+        "Upload your resume (PDF or Word)",
+        type=["pdf", "docx"],
+        label_visibility="collapsed"
+    )
     st.markdown('</div>', unsafe_allow_html=True)
 
 with col2:
@@ -1911,7 +2091,7 @@ if analyze_btn:
         st.error("Please enter your name before analyzing.")
     elif not uploaded_file:
         log_activity("analysis_validation_failed", {"reason":"missing_resume"}, user=visitor_name.strip(), success=False)
-        st.error("Please upload a PDF resume first.")
+        st.error("Please upload a resume file first (PDF or Word).")
     elif uploaded_file.size > MAX_UPLOAD_MB * 1024 * 1024:
         log_activity("analysis_validation_failed", {"reason":"file_too_large", "file_size_bytes":uploaded_file.size}, user=visitor_name.strip(), success=False)
         st.error(f"File is too large ({uploaded_file.size / (1024*1024):.1f} MB). Please upload a PDF under {MAX_UPLOAD_MB} MB.")
@@ -1929,7 +2109,7 @@ if analyze_btn:
         try:
             log_activity("analysis_started", {"file_name": uploaded_file.name, "file_size_bytes": uploaded_file.size}, user=visitor_name.strip())
             show_analysis_step(1, "Reading every page and reconstructing the resume layout")
-            text = extract_text_from_pdf(uploaded_file)
+            text = extract_resume_text(uploaded_file)
             time.sleep(0.25)
             if not text.strip():
                 st.error("Couldn't extract text from this PDF. Make sure it is a text PDF or OCR it first.")
@@ -2301,16 +2481,16 @@ if analyze_btn:
         # ---------------------------
         # DOWNLOAD REPORT
         # ---------------------------
-        report_text = generate_report_text(
-            "resume", overall, quality, keyword_score, word_count, sections_found,
+        report_html = generate_report_html(
+            visitor_name, overall, quality, keyword_score, word_count, sections_found,
             used_verbs, weak_phrases, has_numbers, matched_kw, missing_kw,
             certifications, recommendations, career_matches
         )
         st.download_button(
             "📥 Download Analysis Report",
-            data=report_text,
-            file_name="resume_analysis_report.txt",
-            mime="text/plain",
+            data=report_html,
+            file_name="resume_analysis_report.html",
+            mime="text/html",
         )
 
 # ---------------------------

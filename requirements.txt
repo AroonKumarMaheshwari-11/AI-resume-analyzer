@@ -5,3 +5,4 @@ plotly
 requests
 sentence-transformers
 pandas
+python-docx
